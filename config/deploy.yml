@@ -11,6 +11,10 @@ proxy:
   hosts:
     - rss.ffff.lt
   app_port: 8080
+  healthcheck:
+    path: /health
+    interval: 3
+    timeout: 30
 
 registry:
   username: daliusd1982
