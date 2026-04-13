@@ -1,25 +1,32 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
-	"math/rand"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/mmcdole/gofeed"
 )
 
 // ====================================================================
 // Data types
 // ====================================================================
 
-// DailySnapshot is whatever your cron job computes once every 24 hours.
-// Replace the fields below with whatever you actually want to store.
-type DailySnapshot struct {
-	ComputedAt  time.Time `json:"computed_at"`
-	Message     string    `json:"message"`
-	RandomValue int       `json:"random_value"` // placeholder for real work
+var feedURLs = []string{
+	"https://addyosmani.com/rss.xml",
+	"https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_engineering.xml",
+	"https://www.reddit.com/r/neovim/top/.rss?t=week",
+}
+
+type RSSItem struct {
+	FeedTitle string
+	Title     string
+	Link      string
+	Content   string
+	Published time.Time
 }
 
 // ====================================================================
@@ -27,39 +34,92 @@ type DailySnapshot struct {
 // ====================================================================
 
 type Store struct {
-	mu       sync.RWMutex
-	snapshot *DailySnapshot
+	mu          sync.RWMutex
+	items       []RSSItem
+	lastUpdated time.Time
 }
 
-func (s *Store) Set(snap DailySnapshot) {
+func (s *Store) Set(items []RSSItem, updatedAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.snapshot = &snap
+	s.items = items
+	s.lastUpdated = updatedAt
 }
 
-func (s *Store) Get() *DailySnapshot {
+func (s *Store) Get() ([]RSSItem, time.Time) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.snapshot
+	return s.items, s.lastUpdated
 }
 
 // ====================================================================
-// The work that runs every 24 hours
+// RSS fetch logic
+// ====================================================================
+
+func fetchFeeds() []RSSItem {
+	parser := gofeed.NewParser()
+	parser.UserAgent = "rss-reader/1.0"
+
+	var (
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		items []RSSItem
+	)
+
+	for _, url := range feedURLs {
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
+			feed, err := parser.ParseURL(u)
+			if err != nil {
+				log.Printf("[rss] error fetching %s: %v", u, err)
+				return
+			}
+			feedTitle := feed.Title
+
+			var local []RSSItem
+			for _, item := range feed.Items {
+				ri := RSSItem{
+					FeedTitle: feedTitle,
+					Title:     item.Title,
+					Link:      item.Link,
+					Content:   item.Content,
+				}
+				if ri.Content == "" {
+					ri.Content = item.Description
+				}
+				if item.PublishedParsed != nil {
+					ri.Published = *item.PublishedParsed
+				} else if item.UpdatedParsed != nil {
+					ri.Published = *item.UpdatedParsed
+				}
+				local = append(local, ri)
+			}
+
+			mu.Lock()
+			items = append(items, local...)
+			mu.Unlock()
+		}(url)
+	}
+
+	wg.Wait()
+	return items
+}
+
+// ====================================================================
+// Scheduler
 // ====================================================================
 
 func runDailyJob(store *Store) {
-	snap := DailySnapshot{
-		ComputedAt:  time.Now().UTC(),
-		Message:     "Daily job ran successfully",
-		RandomValue: rand.Intn(1_000_000), // replace with your real logic
-	}
-	store.Set(snap)
-	log.Printf("[cron] snapshot updated at %s", snap.ComputedAt.Format(time.RFC3339))
+	log.Println("[rss] fetching feeds…")
+	items := fetchFeeds()
+	now := time.Now().UTC()
+	store.Set(items, now)
+	log.Printf("[rss] fetched %d items at %s", len(items), now.Format(time.RFC3339))
 }
 
-// scheduler runs the job immediately on startup, then every 24 hours.
 func scheduler(store *Store) {
-	runDailyJob(store) // run once right away so the store is never empty
+	runDailyJob(store)
 
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
@@ -70,20 +130,97 @@ func scheduler(store *Store) {
 }
 
 // ====================================================================
+// HTML template
+// ====================================================================
+
+var pageTmpl = template.Must(template.New("page").Funcs(template.FuncMap{
+	"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+}).Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RSS Reader</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 2rem 1rem; }
+    header { max-width: 860px; margin: 0 auto 2rem; }
+    header h1 { font-size: 1.8rem; }
+    header p  { color: #666; font-size: 0.875rem; margin-top: 0.25rem; }
+    .feed { max-width: 860px; margin: 0 auto 3rem; }
+    .feed h2 { font-size: 1.2rem; border-bottom: 2px solid #ddd; padding-bottom: 0.4rem; margin-bottom: 1rem; }
+    .item { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 1.25rem; margin-bottom: 1rem; }
+    .item h3 { font-size: 1rem; margin-bottom: 0.4rem; }
+    .item h3 a { color: #0066cc; text-decoration: none; }
+    .item h3 a:hover { text-decoration: underline; }
+    .item .meta { font-size: 0.75rem; color: #888; margin-bottom: 0.75rem; }
+    .item .content { font-size: 0.9rem; line-height: 1.6; }
+    .item .content img { max-width: 100%; height: auto; }
+    .empty { color: #999; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RSS Reader</h1>
+    <p>Last updated: {{if .LastUpdated.IsZero}}fetching…{{else}}{{.LastUpdated.Format "2006-01-02 15:04 UTC"}}{{end}}</p>
+  </header>
+
+  {{range .Feeds}}
+  <section class="feed">
+    <h2>{{.Name}}</h2>
+    {{if not .Items}}<p class="empty">No items.</p>{{end}}
+    {{range .Items}}
+    <article class="item">
+      <h3><a href="{{.Link}}" target="_blank" rel="noopener">{{.Title}}</a></h3>
+      {{if not .Published.IsZero}}<p class="meta">{{.Published.Format "2 Jan 2006"}}</p>{{end}}
+      {{if .Content}}<div class="content">{{safeHTML .Content}}</div>{{end}}
+    </article>
+    {{end}}
+  </section>
+  {{end}}
+</body>
+</html>
+`))
+
+type feedGroup struct {
+	Name  string
+	Items []RSSItem
+}
+
+type pageData struct {
+	LastUpdated time.Time
+	Feeds       []feedGroup
+}
+
+// ====================================================================
 // HTTP handlers
 // ====================================================================
 
-func snapshotHandler(store *Store) http.HandlerFunc {
+func rootHandler(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		snap := store.Get()
-		if snap == nil {
-			http.Error(w, "snapshot not yet available", http.StatusServiceUnavailable)
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(snap); err != nil {
-			log.Printf("[http] encode error: %v", err)
+		items, lastUpdated := store.Get()
+
+		// Group by feed title, preserving order of first appearance.
+		orderMap := map[string]int{}
+		var groups []feedGroup
+		for _, item := range items {
+			idx, ok := orderMap[item.FeedTitle]
+			if !ok {
+				idx = len(groups)
+				orderMap[item.FeedTitle] = idx
+				groups = append(groups, feedGroup{Name: item.FeedTitle})
+			}
+			groups[idx].Items = append(groups[idx].Items, item)
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := pageTmpl.Execute(w, pageData{LastUpdated: lastUpdated, Feeds: groups}); err != nil {
+			log.Printf("[http] template error: %v", err)
 		}
 	}
 }
@@ -99,13 +236,11 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	store := &Store{}
 
-	// Start the background scheduler in its own goroutine.
 	go scheduler(store)
 
-	// Register routes.
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", rootHandler(store))
 	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/snapshot", snapshotHandler(store))
 
 	addr := ":8080"
 	log.Printf("[http] listening on %s", addr)
