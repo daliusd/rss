@@ -308,13 +308,22 @@ func runDailyJob(store *Store, seen *SeenStore) {
 	seen.MarkSeen(links)
 }
 
+// nextRunAt returns the next occurrence of hh:mm UTC on or after now.
+func nextRunAt(now time.Time, hour, min int) time.Time {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, time.UTC)
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
 func scheduler(store *Store, seen *SeenStore) {
 	runDailyJob(store, seen)
 
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	for range ticker.C {
+	for {
+		next := nextRunAt(time.Now().UTC(), 5, 0)
+		log.Printf("[scheduler] next run at %s", next.Format(time.RFC3339))
+		<-time.After(time.Until(next))
 		runDailyJob(store, seen)
 	}
 }
