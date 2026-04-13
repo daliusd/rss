@@ -1,0 +1,27 @@
+service: rss
+
+image: daliusd1982/rss
+
+servers:
+  web:
+    - 195.201.143.78
+
+proxy:
+  ssl: true
+  hosts:
+    - rss.ffff.lt
+  app_port: 8080
+
+registry:
+  username: daliusd1982
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+
+env:
+  clear:
+    MAIL_USER: haiku.lt.qa@gmail.com
+  secret:
+    - MAIL_PASS
