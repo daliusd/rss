@@ -17,9 +17,7 @@ proxy:
     timeout: 30
 
 registry:
-  username: daliusd1982
-  password:
-    - KAMAL_REGISTRY_PASSWORD
+  server: localhost:5555
 
 builder:
   arch: amd64
