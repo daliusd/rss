@@ -32,6 +32,7 @@ var feedConfigs = []FeedConfig{
 	{URL: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_engineering.xml"},
 	{URL: "https://www.reddit.com/r/neovim/top/.rss?t=week"},
 	{URL: "https://www.reddit.com/live/18hnzysb1elcs.rss", Postprocess: postprocessRedditLive},
+	{URL: "https://www.aihero.dev/rss.xml"},
 }
 
 type RSSItem struct {
