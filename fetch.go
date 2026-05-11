@@ -24,7 +24,8 @@ var feedConfigs = []FeedConfig{
 	{URL: "https://www.reddit.com/live/18hnzysb1elcs.rss", Postprocess: func(items []RSSItem) []RSSItem {
 		return postprocessRedditLive(items, fetchTweet)
 	}},
-	{URL: "https://www.aihero.dev/rss.xml"},
+	{URL: "https://www.youtube.com/feeds/videos.xml?channel_id=UCswG6FSbgZjbWtdf_hMLaow"},
+	{URL: "https://www.youtube.com/feeds/videos.xml?channel_id=UCLKPca3kwwd-B59HNr-_lvA"},
 }
 
 // ====================================================================
