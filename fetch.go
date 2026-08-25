@@ -15,6 +15,9 @@ var feedConfigs = []FeedConfig{
 	{URL: "https://addyosmani.com/rss.xml"},
 	{URL: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_engineering.xml"},
 	{URL: "https://www.reddit.com/r/neovim/top/.rss?t=week"},
+	{URL: "https://www.reddit.com/r/lithuania/top/.rss?t=week"},
+	{URL: "https://www.reddit.com/r/israel/top/.rss?t=week"},
+	{URL: "https://www.reddit.com/r/ukraine/top/.rss?t=week"},
 	{URL: "https://www.youtube.com/feeds/videos.xml?channel_id=UCswG6FSbgZjbWtdf_hMLaow"},
 	{URL: "https://www.youtube.com/feeds/videos.xml?channel_id=UCLKPca3kwwd-B59HNr-_lvA"},
 }
