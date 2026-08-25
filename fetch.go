@@ -2,7 +2,8 @@ package main
 
 import (
 	"log"
-	"sync"
+	"net/http"
+	"time"
 
 	"github.com/mmcdole/gofeed"
 )
@@ -26,31 +27,32 @@ var feedConfigs = []FeedConfig{
 // RSS fetch logic
 // ====================================================================
 
+const feedFetchPause = 5 * time.Second
+
 func fetchFeeds() []RSSItem {
+	return fetchFeedsWith(fetchFeed, feedFetchPause)
+}
+
+func fetchFeed(url string) (*gofeed.Feed, error) {
 	parser := gofeed.NewParser()
 	parser.UserAgent = "rss-reader/1.0"
+	parser.Client = &http.Client{Timeout: 30 * time.Second}
+	return parser.ParseURL(url)
+}
 
-	var (
-		mu    sync.Mutex
-		wg    sync.WaitGroup
-		items []RSSItem
-	)
+// fetchFeedsWith is the sequential fetch implementation, with its network
+// operation and pause injectable for testing.
+func fetchFeedsWith(fetch func(string) (*gofeed.Feed, error), pause time.Duration) []RSSItem {
+	var items []RSSItem
 
-	for _, cfg := range feedConfigs {
-		wg.Add(1)
-		go func(cfg FeedConfig) {
-			defer wg.Done()
-			feed, err := parser.ParseURL(cfg.URL)
-			if err != nil {
-				log.Printf("[rss] error fetching %s: %v", cfg.URL, err)
-				return
-			}
-			feedTitle := feed.Title
-
-			var local []RSSItem
+	for i, cfg := range feedConfigs {
+		feed, err := fetch(cfg.URL)
+		if err != nil {
+			log.Printf("[rss] error fetching %s: %v", cfg.URL, err)
+		} else {
 			for _, item := range feed.Items {
 				ri := RSSItem{
-					FeedTitle: feedTitle,
+					FeedTitle: feed.Title,
 					Title:     item.Title,
 					Link:      item.Link,
 					Content:   item.Content,
@@ -63,14 +65,15 @@ func fetchFeeds() []RSSItem {
 				} else if item.UpdatedParsed != nil {
 					ri.Published = *item.UpdatedParsed
 				}
-				local = append(local, ri)
+				items = append(items, ri)
 			}
-			mu.Lock()
-			items = append(items, local...)
-			mu.Unlock()
-		}(cfg)
+		}
+
+		if i < len(feedConfigs)-1 {
+			log.Printf("[rss] waiting %s before next feed", pause)
+			time.Sleep(pause)
+		}
 	}
 
-	wg.Wait()
 	return items
 }

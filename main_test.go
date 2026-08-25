@@ -1,12 +1,55 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mmcdole/gofeed"
 )
+
+// ====================================================================
+// fetchFeeds
+// ====================================================================
+
+func TestFetchFeedsWith_SequentialPauseAndErrors(t *testing.T) {
+	original := feedConfigs
+	defer func() { feedConfigs = original }()
+	feedConfigs = []FeedConfig{{URL: "first"}, {URL: "second"}, {URL: "third"}}
+
+	const pause = 20 * time.Millisecond
+	var calls []string
+	var callTimes []time.Time
+	fetch := func(url string) (*gofeed.Feed, error) {
+		calls = append(calls, url)
+		callTimes = append(callTimes, time.Now())
+		if url == "second" {
+			return nil, errors.New("test failure")
+		}
+		return &gofeed.Feed{
+			Title: url,
+			Items: []*gofeed.Item{{Title: "item " + url, Link: "https://example.com/" + url}},
+		}, nil
+	}
+
+	items := fetchFeedsWith(fetch, pause)
+
+	if strings.Join(calls, ",") != "first,second,third" {
+		t.Fatalf("calls = %v; want sequential feed order", calls)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d items; want 2 after continuing past an error", len(items))
+	}
+	if elapsed := callTimes[1].Sub(callTimes[0]); elapsed < pause {
+		t.Errorf("pause between first and second fetches = %s; want at least %s", elapsed, pause)
+	}
+	if elapsed := callTimes[2].Sub(callTimes[1]); elapsed < pause {
+		t.Errorf("pause between second and third fetches = %s; want at least %s", elapsed, pause)
+	}
+}
 
 // ====================================================================
 // nextRunAt
