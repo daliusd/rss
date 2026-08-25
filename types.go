@@ -2,10 +2,9 @@ package main
 
 import "time"
 
-// FeedConfig holds a feed URL and an optional post-processor.
+// FeedConfig holds a feed URL.
 type FeedConfig struct {
-	URL         string
-	Postprocess func([]RSSItem) []RSSItem
+	URL string
 }
 
 type RSSItem struct {
