@@ -15,6 +15,12 @@ import (
 // fetchFeeds
 // ====================================================================
 
+func TestDefaultFeedFetchPause_IsFifteenSeconds(t *testing.T) {
+	if feedFetchPause != 15*time.Second {
+		t.Errorf("default pause = %s; want 15s", feedFetchPause)
+	}
+}
+
 func TestFetchFeedsWith_SequentialPauseAndErrors(t *testing.T) {
 	original := feedConfigs
 	defer func() { feedConfigs = original }()

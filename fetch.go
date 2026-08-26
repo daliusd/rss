@@ -27,7 +27,7 @@ var feedConfigs = []FeedConfig{
 // RSS fetch logic
 // ====================================================================
 
-const feedFetchPause = 5 * time.Second
+const feedFetchPause = 15 * time.Second
 
 func fetchFeeds() []RSSItem {
 	return fetchFeedsWith(fetchFeed, feedFetchPause)
