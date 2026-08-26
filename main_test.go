@@ -21,6 +21,97 @@ func TestDefaultFeedFetchPause_IsFifteenSeconds(t *testing.T) {
 	}
 }
 
+func TestRedditCooldown_UsesRetryAfterBeforeRateLimitReset(t *testing.T) {
+	headers := http.Header{
+		"Retry-After":           []string{"30"},
+		"X-Ratelimit-Remaining": []string{"0.0"},
+		"X-Ratelimit-Reset":     []string{"5"},
+	}
+
+	if got := redditCooldown(headers); got != 30*time.Second {
+		t.Errorf("cooldown = %s; want 30s", got)
+	}
+}
+
+func TestRedditCooldown_UsesResetWhenQuotaIsExhausted(t *testing.T) {
+	headers := http.Header{
+		"X-Ratelimit-Remaining": []string{"0.0"},
+		"X-Ratelimit-Reset":     []string{"5"},
+	}
+
+	if got := redditCooldown(headers); got != 5*time.Second {
+		t.Errorf("cooldown = %s; want 5s", got)
+	}
+}
+
+func TestFetchFeedsWithHeaders_WaitsForRedditResetBeforeNextRedditFeed(t *testing.T) {
+	original := feedConfigs
+	defer func() { feedConfigs = original }()
+	feedConfigs = []FeedConfig{
+		{URL: "https://www.reddit.com/r/first/.rss"},
+		{URL: "https://www.reddit.com/r/second/.rss"},
+	}
+
+	now := time.Date(2026, 8, 26, 8, 0, 0, 0, time.UTC)
+	var sleeps []time.Duration
+	items := fetchFeedsWithHeaders(
+		func(url string) (*gofeed.Feed, http.Header, error) {
+			headers := http.Header{}
+			if url == feedConfigs[0].URL {
+				headers.Set("X-Ratelimit-Remaining", "0")
+				headers.Set("X-Ratelimit-Reset", "20")
+			}
+			return &gofeed.Feed{Title: url}, headers, nil
+		},
+		15*time.Second,
+		func() time.Time { return now },
+		func(delay time.Duration) {
+			sleeps = append(sleeps, delay)
+			now = now.Add(delay)
+		},
+	)
+
+	if len(items) != 0 {
+		t.Errorf("items = %d; want no items", len(items))
+	}
+	if len(sleeps) != 2 || sleeps[0] != 15*time.Second || sleeps[1] != 5*time.Second {
+		t.Errorf("sleeps = %v; want [15s 5s]", sleeps)
+	}
+}
+
+func TestFetchFeedsWithHeaders_DoesNotDelayNonRedditFeedForRedditCooldown(t *testing.T) {
+	original := feedConfigs
+	defer func() { feedConfigs = original }()
+	feedConfigs = []FeedConfig{
+		{URL: "https://www.reddit.com/r/first/.rss"},
+		{URL: "https://example.com/feed.xml"},
+		{URL: "https://www.reddit.com/r/second/.rss"},
+	}
+
+	now := time.Date(2026, 8, 26, 8, 0, 0, 0, time.UTC)
+	var sleeps []time.Duration
+	fetchFeedsWithHeaders(
+		func(url string) (*gofeed.Feed, http.Header, error) {
+			headers := http.Header{}
+			if url == feedConfigs[0].URL {
+				headers.Set("X-Ratelimit-Remaining", "0")
+				headers.Set("X-Ratelimit-Reset", "20")
+			}
+			return &gofeed.Feed{Title: url}, headers, nil
+		},
+		15*time.Second,
+		func() time.Time { return now },
+		func(delay time.Duration) {
+			sleeps = append(sleeps, delay)
+			now = now.Add(delay)
+		},
+	)
+
+	if len(sleeps) != 2 || sleeps[0] != 15*time.Second || sleeps[1] != 15*time.Second {
+		t.Errorf("sleeps = %v; want [15s 15s]", sleeps)
+	}
+}
+
 func TestFetchFeedsWith_SequentialPauseAndErrors(t *testing.T) {
 	original := feedConfigs
 	defer func() { feedConfigs = original }()
