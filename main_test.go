@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +31,8 @@ func TestRedditCooldown_UsesRetryAfterBeforeRateLimitReset(t *testing.T) {
 		"X-Ratelimit-Reset":     []string{"5"},
 	}
 
-	if got := redditCooldown(headers); got != 30*time.Second {
-		t.Errorf("cooldown = %s; want 30s", got)
+	if got := redditCooldown(headers); got != 35*time.Second {
+		t.Errorf("cooldown = %s; want 35s (30s + 5s buffer)", got)
 	}
 }
 
@@ -39,8 +42,8 @@ func TestRedditCooldown_UsesResetWhenQuotaIsExhausted(t *testing.T) {
 		"X-Ratelimit-Reset":     []string{"5"},
 	}
 
-	if got := redditCooldown(headers); got != 5*time.Second {
-		t.Errorf("cooldown = %s; want 5s", got)
+	if got := redditCooldown(headers); got != 10*time.Second {
+		t.Errorf("cooldown = %s; want 10s (5s + 5s buffer)", got)
 	}
 }
 
@@ -74,8 +77,8 @@ func TestFetchFeedsWithHeaders_WaitsForRedditResetBeforeNextRedditFeed(t *testin
 	if len(items) != 0 {
 		t.Errorf("items = %d; want no items", len(items))
 	}
-	if len(sleeps) != 2 || sleeps[0] != 15*time.Second || sleeps[1] != 5*time.Second {
-		t.Errorf("sleeps = %v; want [15s 5s]", sleeps)
+	if len(sleeps) != 2 || sleeps[0] != 15*time.Second || sleeps[1] != 10*time.Second {
+		t.Errorf("sleeps = %v; want [15s 10s]", sleeps)
 	}
 }
 
@@ -110,6 +113,107 @@ func TestFetchFeedsWithHeaders_DoesNotDelayNonRedditFeedForRedditCooldown(t *tes
 	if len(sleeps) != 2 || sleeps[0] != 15*time.Second || sleeps[1] != 15*time.Second {
 		t.Errorf("sleeps = %v; want [15s 15s]", sleeps)
 	}
+}
+
+func TestRedditCooldown_NoCooldownWhenQuotaRemains(t *testing.T) {
+	headers := http.Header{
+		"X-Ratelimit-Remaining": []string{"42.0"},
+		"X-Ratelimit-Reset":     []string{"5"},
+	}
+
+	if got := redditCooldown(headers); got != 0 {
+		t.Errorf("cooldown = %s; want 0", got)
+	}
+}
+
+func TestFetchFeedsWithHeaders_LogsFeedSuccess(t *testing.T) {
+	original := feedConfigs
+	defer func() { feedConfigs = original }()
+	feedConfigs = []FeedConfig{{URL: "https://example.com/feed.xml"}}
+
+	output := captureLog(t, func() {
+		fetchFeedsWithHeaders(
+			func(url string) (*gofeed.Feed, http.Header, error) {
+				return &gofeed.Feed{
+					Title: "Example",
+					Items: []*gofeed.Item{{Title: "one"}, {Title: "two"}},
+				}, http.Header{}, nil
+			},
+			0,
+			time.Now,
+			func(time.Duration) {},
+		)
+	})
+
+	if !strings.Contains(output, "https://example.com/feed.xml") ||
+		!strings.Contains(output, "2 items") {
+		t.Errorf("log = %q; want success line naming the feed and 2 items", output)
+	}
+}
+
+func TestFetchFeedsWithHeaders_LogsRedditRateLimit(t *testing.T) {
+	original := feedConfigs
+	defer func() { feedConfigs = original }()
+	feedConfigs = []FeedConfig{{URL: "https://www.reddit.com/r/first/.rss"}}
+
+	output := captureLog(t, func() {
+		fetchFeedsWithHeaders(
+			func(url string) (*gofeed.Feed, http.Header, error) {
+				headers := http.Header{}
+				headers.Set("X-Ratelimit-Remaining", "97.0")
+				headers.Set("X-Ratelimit-Used", "3")
+				headers.Set("X-Ratelimit-Reset", "412")
+				return &gofeed.Feed{Title: url}, headers, nil
+			},
+			0,
+			time.Now,
+			func(time.Duration) {},
+		)
+	})
+
+	for _, want := range []string{"remaining=97.0", "used=3", "reset=412"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("log = %q; want it to contain %q", output, want)
+		}
+	}
+}
+
+func TestFetchFeedsWithHeaders_DoesNotLogRateLimitForNonRedditFeed(t *testing.T) {
+	original := feedConfigs
+	defer func() { feedConfigs = original }()
+	feedConfigs = []FeedConfig{{URL: "https://example.com/feed.xml"}}
+
+	output := captureLog(t, func() {
+		fetchFeedsWithHeaders(
+			func(url string) (*gofeed.Feed, http.Header, error) {
+				return &gofeed.Feed{Title: url}, http.Header{}, nil
+			},
+			0,
+			time.Now,
+			func(time.Duration) {},
+		)
+	})
+
+	if strings.Contains(output, "rate limit") {
+		t.Errorf("log = %q; want no rate limit line for a non-Reddit feed", output)
+	}
+}
+
+// captureLog collects everything written to the standard logger during fn.
+func captureLog(t *testing.T, fn func()) string {
+	t.Helper()
+
+	var buf bytes.Buffer
+	flags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(os.Stderr)
+		log.SetFlags(flags)
+	}()
+
+	fn()
+	return buf.String()
 }
 
 func TestFetchFeedsWith_SequentialPauseAndErrors(t *testing.T) {

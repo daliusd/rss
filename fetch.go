@@ -32,9 +32,13 @@ var feedConfigs = []FeedConfig{
 
 const feedFetchPause = 15 * time.Second
 
+// redditCooldownBuffer is added to any cooldown Reddit asks for, so we come
+// back a little after the quota has actually reset rather than right on it.
+const redditCooldownBuffer = 5 * time.Second
+
 func redditCooldown(headers http.Header) time.Duration {
 	if retryAfter, ok := headerSeconds(headers, "Retry-After"); ok {
-		return retryAfter
+		return retryAfter + redditCooldownBuffer
 	}
 
 	remaining, ok := headerSeconds(headers, "X-Ratelimit-Remaining")
@@ -46,7 +50,25 @@ func redditCooldown(headers http.Header) time.Duration {
 	if !ok {
 		return 0
 	}
-	return reset
+	return reset + redditCooldownBuffer
+}
+
+func logRedditRateLimit(feedURL string, headers http.Header) {
+	log.Printf(
+		"[rss] Reddit rate limit for %s: remaining=%s used=%s reset=%s retry-after=%s",
+		feedURL,
+		headerOrDash(headers, "X-Ratelimit-Remaining"),
+		headerOrDash(headers, "X-Ratelimit-Used"),
+		headerOrDash(headers, "X-Ratelimit-Reset"),
+		headerOrDash(headers, "Retry-After"),
+	)
+}
+
+func headerOrDash(headers http.Header, name string) string {
+	if value := headers.Get(name); value != "" {
+		return value
+	}
+	return "-"
 }
 
 func headerSeconds(headers http.Header, name string) (time.Duration, bool) {
@@ -115,7 +137,9 @@ func fetchFeedsWithHeaders(
 
 		feed, headers, err := fetch(cfg.URL)
 		if isRedditFeed(cfg.URL) {
+			logRedditRateLimit(cfg.URL, headers)
 			if cooldown := redditCooldown(headers); cooldown > 0 {
+				log.Printf("[rss] Reddit cooldown of %s before next Reddit feed", cooldown)
 				allowedAt := now().Add(cooldown)
 				if allowedAt.After(nextRedditFetchAt) {
 					nextRedditFetchAt = allowedAt
@@ -125,6 +149,7 @@ func fetchFeedsWithHeaders(
 		if err != nil {
 			log.Printf("[rss] error fetching %s: %v", cfg.URL, err)
 		} else {
+			log.Printf("[rss] fetched %s: %d items", cfg.URL, len(feed.Items))
 			for _, item := range feed.Items {
 				ri := RSSItem{
 					FeedTitle: feed.Title,
