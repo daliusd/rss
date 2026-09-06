@@ -16,7 +16,7 @@ import (
 
 const (
 	mailTo   = "dalius.dobravolskas@gmail.com"
-	smtpHost = "smtp.gmail.com"
+	smtpHost = "mail.ffff.lt"
 	smtpPort = 587
 )
 

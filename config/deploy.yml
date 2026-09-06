@@ -24,6 +24,6 @@ builder:
 
 env:
   clear:
-    MAIL_USER: haiku.lt.qa@gmail.com
+    MAIL_USER: dalius@ffff.lt
   secret:
     - MAIL_PASS

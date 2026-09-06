@@ -3,7 +3,7 @@
 ## Run
 
 ```
-MAIL_USER=haiku.lt.qa@gmail.com MAIL_PASS=$(pass show gmail_haiku_lt_qa_app) go run .
+MAIL_USER=dalius@ffff.lt MAIL_PASS=$(pass show mox_dalius) go run .
 curl http://localhost:8080/
 ```
 
